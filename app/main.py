@@ -2,7 +2,8 @@
 import streamlit as st
 from sqlalchemy import create_engine, text
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 import uuid
 from pathlib import Path
 import time
@@ -14,6 +15,10 @@ import numpy as np
 import cv2
 import os
 import math
+# Plots
+import plotly.express as px
+import plotly.graph_objects as go
+
 
 # ==========================================================
 # CONFIG - update these values for your environment
@@ -36,9 +41,33 @@ engine = create_engine(DB_URL)
 s3 = boto3.client("s3", region_name=AWS_REGION)
 model = YOLO(MODEL_PATH)
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Jio Hotstar AdVision & Analytics", page_icon="🎬", layout="wide")
 st.sidebar.title("📌 Navigation")
 menu = st.sidebar.radio("Go to:", ["📄 About Project", "🧭 Dashboard (Track / Charts / DB / Admin)"])
+
+# ==========================================================
+# Ensure matches table exists
+# ==========================================================
+create_matches_table_sql = """
+CREATE TABLE IF NOT EXISTS matches (
+    id UUID PRIMARY KEY,
+    match_id VARCHAR(50),
+    home_team VARCHAR(100),
+    away_team VARCHAR(100),
+    match_type VARCHAR(20),
+    location VARCHAR(100),
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    winner VARCHAR(100),
+    raw_video_s3_key VARCHAR(255),
+    tracked_video_s3_key VARCHAR(255),
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+"""
+with engine.begin() as conn:
+    conn.execute(text(create_matches_table_sql))
+
 
 # ==========================================================
 # Ensure brand_detections table exists
@@ -62,8 +91,95 @@ with engine.begin() as conn:
     conn.execute(text(create_table_sql))
 
 # ==========================================================
+# Ensure brand_aggregates table exists
+# ==========================================================
+create_agg_table_sql = """
+CREATE TABLE IF NOT EXISTS brand_aggregates (
+    id UUID PRIMARY KEY,
+    match_id VARCHAR(50),
+    brand_name VARCHAR(100),
+    total_duration_seconds FLOAT,
+    visibility_ratio FLOAT,
+    placement_distribution JSON,
+    first_seen TIMESTAMP,
+    last_seen TIMESTAMP,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+"""
+with engine.begin() as conn:
+    conn.execute(text(create_agg_table_sql))
+
+
+# ==========================================================
 # Utilities
 # ==========================================================
+
+def generate_brand_aggregates(match_id, match_start_dt, match_duration):
+    """
+    Build and insert aggregated rows into brand_aggregates for the given match.
+    - match_start_dt: datetime object for the match start (so we can convert seconds -> timestamp)
+    - match_duration: total video duration in seconds (float)
+    """
+    sql = text("""
+        SELECT brand_name, duration_sec, placement, start_time_sec, end_time_sec
+        FROM brand_detections
+        WHERE match_id = :m
+    """)
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"m": match_id}).fetchall()
+
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows, columns=[
+        "brand_name", "duration_sec", "placement", "start_time_sec", "end_time_sec"
+    ])
+
+    brands = df["brand_name"].unique().tolist()
+
+    for brand in brands:
+        sub = df[df["brand_name"] == brand]
+
+        total_duration = float(sub["duration_sec"].sum())
+        visibility_ratio = float(total_duration / match_duration) if match_duration > 0 else 0.0
+
+        # placement distribution as normalized counts (dict)
+        placement_counts = sub["placement"].value_counts(normalize=True).to_dict()
+
+        # first/last seen as timestamps (match_start + seconds)
+        first_sec = float(sub["start_time_sec"].min())
+        last_sec = float(sub["end_time_sec"].max())
+        first_ts = match_start_dt + timedelta(seconds=first_sec)
+        last_ts  = match_start_dt + timedelta(seconds=last_sec)
+
+        agg_id = str(uuid.uuid4())
+
+        insert_sql = text("""
+            INSERT INTO brand_aggregates (
+                id, match_id, brand_name, total_duration_seconds,
+                visibility_ratio, placement_distribution,
+                first_seen, last_seen, created_at, updated_at
+            ) VALUES (
+                :id, :m, :bn, :td, :vr, :pd, :fs, :ls, :c, :u
+            )
+        """)
+        with engine.begin() as conn:
+            conn.execute(insert_sql, {
+                "id": agg_id,
+                "m": match_id,
+                "bn": brand,
+                "td": total_duration,
+                "vr": visibility_ratio,
+                # ensure JSON serializable: use json.dumps
+                "pd": json.dumps(placement_counts),
+                "fs": first_ts,
+                "ls": last_ts,
+                "c": datetime.now(),
+                "u": datetime.now()
+            })
+
+
 def generate_match_id():
     query = "SELECT match_id FROM matches ORDER BY created_at DESC LIMIT 1"
     with engine.begin() as conn:
@@ -209,20 +325,113 @@ if "last_completed_match_id" not in st.session_state:
 # PAGE 1 — ABOUT
 # ==========================================================
 if menu == "📄 About Project":
-    st.title("📄 About — Jio Hotstar AdVision & Analytics")
-    st.markdown("Automated brand detection & analytics.")
+
+    st.markdown("""
+    <style>
+    /* Premium White Heading */
+    .premium-title {
+        color: #FFFFFF; 
+        font-size: 32px;
+        font-weight: 700;
+        padding-bottom: 8px;
+    }
+
+    /* Subheadings – clean white */
+    .premium-subtitle {
+        color: #FFFFFF;
+        font-size: 24px;
+        font-weight: 600;
+        padding-top: 18px;
+    }
+
+    /* Body text – soft white */
+    .premium-body {
+        font-size: 16px;
+        line-height: 1.6;
+        color: #F2F2F2;  /* softer white for smooth readability */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # -------------------- MAIN ABOUT CONTENT --------------------
+    st.markdown("""
+    <div class="premium-title">⚡Jio Hotstar AdVision & Analytics</div>
+
+    <div class="premium-body">
+    A next-generation system that automatically detects, tracks, and analyzes brand advertisements in cricket match broadcasts — delivering accurate, fast, and audit-ready insights for sponsors and broadcasters.
+    </div>
+
+    <br>
+    <div class="premium-subtitle">Core Features 💡</div>
+
+    <div class="premium-body">
+    🔍 <b>Automated Brand Detection</b> &nbsp;&nbsp; YOLOv8 identifies sponsor logos across frames.<br><br>
+
+    🕒 <b>Timestamp & Duration Metrics</b> &nbsp;&nbsp; Calculates how long each brand stays visible.<br><br>
+
+    🎯 <b>Placement Classification</b> &nbsp;&nbsp; Jersey • Boundary • Overlay • Ground.<br><br>
+
+    ✂️ <b>Video Chunk Extraction</b> &nbsp;&nbsp; Creates brand-wise clips and uploads to S3.<br><br>
+
+    📀 <b>Structured Storage</b> &nbsp;&nbsp; All detections & aggregates saved in PostgreSQL.<br><br>
+
+    📊 <b>Interactive Dashboard</b> &nbsp;&nbsp; View match data, detections, and brand exposure summaries.
+    </div>
+
+    <div class="premium-subtitle">Business Value 💼</div>
+
+    <div class="premium-body">
+    📈 Precise sponsor ROI measurement<br>
+    ⚡ Fast & automated reporting<br>
+    🏟 Optimized ad placement decisions<br>
+    🔍 Easy audit with brand-specific clips<br>
+    🔄 Scalable for full tournaments<br>
+    </div>
+
+    <div class="premium-subtitle">Output You Get 🧩</div>
+
+    <div class="premium-body">
+    • Brand exposure duration<br>
+    • Visibility ratio<br>
+    • Placement distribution<br>
+    • Brand-level summary tables<br>
+    • Match metadata<br>
+    • Processed video chunks in S3<br>
+    </div>
+
+    <div class="premium-subtitle">🚀 Impact</div>
+
+    <div class="premium-body">
+    Reliable, real-time advertising analytics that reduces manual effort and gives brands data-backed insights.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # -------------------- FOOTER --------------------
+        # Footer
+    st.markdown("""
+        <hr>
+        <div style="text-align: center;">
+            <p style="font-size: 13px;">Jio Hotstar AdVision & Analytics | Built by <strong>Infant Joshva</strong></p>
+            <a href="https://github.com/Infant-Joshva" target="_blank" style="text-decoration: none; margin: 0 10px;">🐙 GitHub</a>
+            <a href="https://www.linkedin.com/in/infant-joshva" target="_blank" style="text-decoration: none; margin: 0 10px;">🔗 LinkedIn</a>
+            <a href="mailto:infantjoshva2024@gmail.com" style="text-decoration: none; margin: 0 10px;">📩 Contact</a>
+        </div>
+    """, unsafe_allow_html=True)
+
+
+
 
 # ==========================================================
 # PAGE 2 — DASHBOARD
 # ==========================================================
 elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
     st.title("🧭 Dashboard")
-    tab_up, tab_ch, tab_tb, tab_ad = st.tabs(["Upload & Track", "Charts (Coming Soon)", "Detection Table", "Admin Tools"])
+    tab_up, tab_ch, tab_tb, tab_bot, tab_ad = st.tabs(["Ingestion & Tracking", "Visual Analytics", "Brand Exposure Insights", "AI Chat Bot","System Controls"])
 
     # =============== Upload & Track Tab ===============
     with tab_up:
         st.header("Upload & Track")
-        st.caption(f"Current Match ID: **{st.session_state.current_match_id}**")
+        st.caption(f"📍Current Match ID: **{st.session_state.current_match_id}**")
 
         with st.form("upform"):
             home = st.text_input("Home Team")
@@ -288,6 +497,11 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                         trk_url=s3.generate_presigned_url("get_object",Params={"Bucket":BUCKET_NAME,"Key":trk_key},ExpiresIn=3600)
 
                     # Insert matches row
+
+                    # create proper datetimes for match start/end (reuse later)
+                    match_start_dt = datetime.combine(datetime.today(), stt)
+                    match_end_dt   = datetime.combine(datetime.today(), ett)
+                    
                     with engine.begin() as conn:
                         conn.execute(text("""
                             INSERT INTO matches 
@@ -299,14 +513,14 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                         """),{
                             "i":mid,"m":match_id,"h":home,"a":away,"t":mtype,
                             "l":loc,
-                            "st":datetime.combine(datetime.today(),stt),
-                            "et":datetime.combine(datetime.today(),ett),
+                            "st":match_start_dt,
+                            "et":match_end_dt,
                             "w":win,
                             "rk":raw_key,"tk":trk_key,
                             "c":datetime.now(),"u":datetime.now()
                         })
 
-                    st.caption("Tracking Completed ✅")
+                    st.caption("Tracking done ✅. Finalizing video chunks… ⏳")
                     if trk_url:
                         st.video(trk_url)
 
@@ -362,6 +576,14 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
 
                     st.success(f"{count} Brands were detected and video chunks uploaded to S3... 🎉")
 
+                    # Generate brand aggregates after detection
+                    try:
+                        generate_brand_aggregates(match_id, match_start_dt, td)
+                        # st.success("Brand aggregates generated successfully 📊")
+                    except Exception as e:
+                        st.error(f"Error generating brand aggregates: {e}")
+
+
                     # 1) Save the match we just completed — use this for table/chart view
                     st.session_state.last_completed_match_id = match_id
 
@@ -375,17 +597,219 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
 
     # =============== CHARTS (placeholder) ===============
     with tab_ch:
-        st.header("Charts (Coming Soon)")
-        st.info("Charts will be generated only for the current match_id.")
+        st.header("📈 Brand Analytics (Coming Soon)")
+        st.caption(f"Reports for Match ID : **{st.session_state.current_match_id}**")
+
+
+        mid = st.session_state.last_completed_match_id
+
+        if not mid:
+            st.warning("Process at least one match to view charts.")
+            st.stop()
+
+        # Load aggregate + detection tables
+        with engine.begin() as conn:
+            df_agg = pd.read_sql(text("""
+                SELECT brand_name, total_duration_seconds, visibility_ratio, placement_distribution
+                FROM brand_aggregates
+                WHERE match_id = :m
+            """), conn, params={"m": mid})
+
+            df_det = pd.read_sql(text("""
+                SELECT brand_name, start_time_sec, end_time_sec, duration_sec, placement, confidence
+                FROM brand_detections
+                WHERE match_id = :m
+            """), conn, params={"m": mid})
+
+        # ----------------------------------------------------------
+        # ROW 0 — METRIC CARDS (PLOTLY STYLE)
+        # ----------------------------------------------------------
+        st.subheader("📌 Match Summary Metrics")
+
+        total_brands = df_agg["brand_name"].nunique()
+        total_exposure = df_agg["total_duration_seconds"].sum()
+
+        max_brand = df_agg.loc[df_agg["total_duration_seconds"].idxmax(), "brand_name"]
+        max_brand_dur = df_agg["total_duration_seconds"].max()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🏷️ Brands Detected", total_brands)
+        c2.metric("🔥 Top Brand", f"{max_brand} ({round(max_brand_dur,2)}s)")
+        c3.metric("⏱️ Total Exposure (Sec)", round(total_exposure, 2))
+        
+
+        # ----------------------------------------------------------
+        # ROW 1 — BRAND EXPOSURE + VISIBILITY RATIO
+        # ----------------------------------------------------------
+        st.subheader("📌 Brand Exposure Overview")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fig1 = px.bar(
+                df_agg,
+                x="brand_name",
+                y="total_duration_seconds",
+                title="Total Visibility Duration (Seconds)",
+                color="brand_name",
+                text_auto=True
+            )
+            fig1.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig1, use_container_width=True)
+
+        with col2:
+            df_ratio = df_agg.copy()
+            df_ratio["visibility_ratio"] *= 100
+
+            fig2 = px.bar(
+                df_ratio,
+                x="brand_name",
+                y="visibility_ratio",
+                title="Visibility Ratio (%)",
+                color="brand_name",
+                text_auto=True
+            )
+            fig2.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # ======================================================
+        # 🥧 PIE CHART — Placement Visibility (Overall Summary)
+        # ======================================================
+        st.subheader("🥧 Overall Placement Visibility Summary")
+
+        # Sum total duration per placement
+        df_place_sum = df_det.groupby("placement")["duration_sec"].sum().reset_index()
+
+        # Convert to percentage
+        total_dur = df_place_sum["duration_sec"].sum()
+        df_place_sum["percentage"] = (df_place_sum["duration_sec"] / total_dur) * 100
+
+        fig_pie = px.pie(
+            df_place_sum,
+            names="placement",
+            values="percentage",
+            title="Placement Visibility Contribution (%)",
+            color="placement",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            hole=0.45  # donut style 
+        )
+
+        fig_pie.update_traces(textinfo="label+percent", pull=[0.03]*len(df_place_sum))
+
+        fig_pie.update_layout(height=420)
+
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+
+        # ----------------------------------------------------------
+        # ROW 3 — DETECTION COUNT + AVG DURATION
+        # ----------------------------------------------------------
+        st.subheader("🔍 Detection Insights")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            det_count = df_det.groupby("brand_name").size().reset_index(name="count")
+            fig4 = px.bar(
+                det_count,
+                x="brand_name",
+                y="count",
+                color="brand_name",
+                text_auto=True,
+                title="Number of Detections per Brand"
+            )
+            fig4.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig4, use_container_width=True)
+
+        with col4:
+            avg_dur = df_det.groupby("brand_name")["duration_sec"].mean().reset_index()
+            fig5 = px.bar(
+                avg_dur,
+                x="brand_name",
+                y="duration_sec",
+                color="brand_name",
+                text_auto=True,
+                title="Average Clip Duration per Brand"
+            )
+            fig5.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig5, use_container_width=True)
+
+        # ----------------------------------------------------------
+        # ROW 4 — CONFIDENCE HISTOGRAM + HEATMAP
+        # ----------------------------------------------------------
+        st.subheader("🎛️ Model Performance & Placement Stats")
+
+        col5, col6 = st.columns(2)
+
+        with col5:
+            fig6 = px.histogram(
+                df_det,
+                x="confidence",
+                nbins=20,
+                title="Confidence Score Distribution",
+                color="brand_name"
+            )
+            fig6.update_layout(height=350, showlegend=False)
+            st.plotly_chart(fig6, use_container_width=True)
+
+        with col6:
+            df_heat = df_det.groupby(["placement", "brand_name"])["duration_sec"].sum().reset_index()
+            fig7 = px.density_heatmap(
+                df_heat,
+                x="brand_name",
+                y="placement",
+                z="duration_sec",
+                color_continuous_scale="Blues",
+                title="Placement vs Duration Heatmap"
+            )
+            fig7.update_layout(height=350)
+            st.plotly_chart(fig7, use_container_width=True)
+        
 
     # =============== DETECTION TABLE ===============
     with tab_tb:
-        st.header("Detection Table (Current Match)")
+        # -----------------------------------------------
+        # 📌 Brand Detection Table
+        # -----------------------------------------------
+        st.caption(f"**📍 {st.session_state.current_match_id}**")
         mid = st.session_state.last_completed_match_id
 
-        if mid is None:
-            st.info("No completed match yet — upload a match to see detections here.")
+        # --------------------------------------
+        # 🟩 MATCHES TABLE
+        # --------------------------------------
+        
+        if mid:
+            st.subheader("🟩 Match Details (Meta Information)")
+        with engine.begin() as conn:
+            df_match = pd.read_sql(text("""
+                SELECT 
+                    home_team,
+                    away_team,
+                    match_type,
+                    location,
+                    start_time,
+                    end_time,
+                    winner,
+                    raw_video_s3_key,
+                    tracked_video_s3_key,
+                    created_at
+                FROM matches
+                WHERE match_id = :m
+                LIMIT 1
+            """), conn, params={"m": mid})
+
+        if df_match.empty:
+            st.warning("No match details found for this Match ID.")
         else:
+            st.dataframe(df_match, use_container_width=True)
+            # st.info("Showing match metadata associated with this upload.")
+
+
+        # --------------------------------------
+        # 🟩 Dectection TABLE
+        # --------------------------------------
+        if mid:
+            st.subheader("🟧 Detection Records")
             with engine.begin() as conn:
                 df = pd.read_sql(text("""
                     SELECT brand_name, start_time_sec, end_time_sec, duration_sec,
@@ -399,8 +823,39 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                 st.warning("No detections for this match yet.")
             else:
                 st.dataframe(df, use_container_width=True)
-                st.info(f"Showing detections for completed Match ID: **{mid}**")
+                # st.info(f"Showing detections for completed Match ID: **{mid}**")
 
+            # -----------------------------------------------
+            # 📌 Brand Aggregates Table
+            # -----------------------------------------------
+            st.subheader("🟪 Brand Exposure Summar")
+
+            with engine.begin() as conn:
+                df_agg = pd.read_sql(text("""
+                    SELECT 
+                        brand_name,
+                        total_duration_seconds,
+                        visibility_ratio,
+                        placement_distribution,
+                        first_seen,
+                        last_seen,
+                        created_at
+                    FROM brand_aggregates
+                    WHERE match_id = :m
+                    ORDER BY brand_name ASC
+                """), conn, params={"m": mid})
+
+            if df_agg.empty:
+                st.warning("Brand aggregates not yet generated for this match.")
+            else:
+                st.dataframe(df_agg, use_container_width=True)
+                # st.success("Showing brand-level summary aggregate table.")
+
+
+    # =============== DETECTION TAB ===============
+    with tab_bot:
+        st.header("📺 AI Chat Bot")
+        st.caption(f"You can ask me anything about this match: **📍 {st.session_state.current_match_id}**")
 
 
     # =============== ADMIN TAB ===============
@@ -410,11 +865,9 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
         current_mid = st.session_state.last_completed_match_id
 
         if current_mid is None:
-            st.info("No completed match to delete yet.")
+            st.warning("Nothing to delete yet. 🗑️")
         else:
-            st.warning(f"⚠️ This will delete ALL data for Match ID: {current_mid}")
-            st.warning("Rows from MATCHES table, BRAND_DETECTIONS table and ALL S3 videos will be deleted!")
-
+            st.warning(f"⚠️ This will delete ALL the data's and videos for Match ID: {current_mid}")
             confirm = st.text_input("Type DELETE MATCH to confirm:")
 
             if st.button("🗑 Delete Entire Current Match"):
@@ -439,7 +892,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                                 Delete={"Objects": delete_list[i: i + 1000]}
                             )
 
-                        st.success("S3 folder deleted successfully.")
+                        st.caption("🗂️ Cloud Storage Cleaned")
 
                     except Exception as e:
                         st.error(f"Error deleting from S3: {e}")
@@ -452,7 +905,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                             conn.execute(text("DELETE FROM brand_detections WHERE match_id = :m"), {"m": current_mid})
                             conn.execute(text("DELETE FROM matches WHERE match_id = :m"), {"m": current_mid})
 
-                        st.success("Database rows deleted successfully.")
+                        st.caption("🧹 Database Cleared")
                     except Exception as e:
                         st.error(f"DB delete error: {e}")
 
@@ -463,7 +916,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                     st.session_state.current_match_id = new_id
                     st.session_state.last_completed_match_id = None
 
-                    st.success(f"Reset completed! Next Match ID Ready: {new_id}")
+                    st.caption(f"⚡ Fresh Match ID loaded:: {new_id} 👍🏻")
 
                 else:
                     st.error("Type DELETE MATCH exactly to confirm.")
