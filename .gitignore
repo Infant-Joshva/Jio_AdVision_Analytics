@@ -1,5 +1,5 @@
 # ==============================
-# Jio_AdVision_Analytics .gitignore
+# Jio_AdVision_Analytics .gitignore (Updated)
 # ==============================
 
 # --- Python build/cache files ---
@@ -46,12 +46,8 @@ models/yolov8/weights/
 *.onnx
 *.h5
 
-# --- Datasets & large media ---
-data/raw_videos/
-data/frames/
-data/processed/
-data/brand_clips/
-data/annotations/
+# --- Datasets & large media (IGNORE EVERYTHING) ---
+data/
 *.mp4
 *.avi
 *.mov
@@ -60,6 +56,12 @@ data/annotations/
 *.tar.gz
 *.csv
 *.json
+
+# --- EXCEPTION: Allow testing_video folder (even though videos are blocked) ---
+!testing_video/
+!testing_video/*.mp4
+!testing_video/*.mov
+!testing_video/*.avi
 
 # --- Roboflow / external dataset cache ---
 roboflow_cache/
@@ -75,16 +77,26 @@ docker/*.log
 docker/__pycache__/
 *.pid
 
-# --- Ignore all backups & reports ---
+# --- Reports & backups ---
 reports/generated/
 reports/output/
 *.pdf
 *.html
 
-# --- Ignore AWS credentials or secrets ---
+# --- SECRETS / API / Sensitive Info (MOST IMPORTANT) ---
+secrets/
 *.pem
 *.key
 *.crt
 *.aws
-*.json
+*.env
+.env.local
+.env.secret
+secrets.toml
+*credentials*.json
+aws_credentials.json
+gcp_credentials.json
+azure_credentials.json
+
+# --- Allow ONLY requirements.txt ---
 !requirements.txt
