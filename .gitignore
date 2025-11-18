@@ -41,6 +41,8 @@ logs/
 # --- Model weights / training runs ---
 runs/
 
+# Ignore scripts folder
+scripts/
 
 # --- Datasets & large media (IGNORE EVERYTHING) ---
 data/
