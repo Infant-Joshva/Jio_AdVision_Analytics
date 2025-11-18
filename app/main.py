@@ -23,6 +23,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 
+import tempfile, os
+tmp = tempfile.gettempdir()
+
+
 
 # Chat Bot
 import google.generativeai as genai
@@ -332,6 +336,8 @@ def insert_detection_row(match_id, brand, start, end, placement, key, conf):
 
 
 def generate_charts_pdf(match_id):
+    import tempfile, os
+
     pdf_path = f"Brand_Report_{match_id}.pdf"
     doc = SimpleDocTemplate(pdf_path, pagesize=A4)
     styles = getSampleStyleSheet()
@@ -342,24 +348,34 @@ def generate_charts_pdf(match_id):
     elements.append(title)
     elements.append(Spacer(1, 20))
 
-    # Add charts one by one
+    # Temp directory
+    tmp = tempfile.gettempdir()
+
+    # EXACT MATCH (based on your saved images)
     charts = [
-        ("Brand Exposure Duration", "fig1_exposure.png"),
-        ("Visibility Ratio", "fig2_ratio.png"),
-        ("Placement Distribution", "fig3_pie.png"),
-        ("Detections Count", "fig4_detect_count.png"),
-        ("Average Duration", "fig5_avg_duration.png"),
-        ("Confidence Distribution", "fig6_confidence.png"),
-        ("Placement Heatmap", "fig7_heatmap.png"),
+        ("Brand Exposure Duration",        os.path.join(tmp, "fig1_exposure.png")),
+        ("Visibility Ratio",               os.path.join(tmp, "fig2_ratio.png")),
+        ("Placement Distribution",         os.path.join(tmp, "fig3_pie.png")),
+        ("Detections Count",               os.path.join(tmp, "fig4_detect_count.png")),
+        ("Average Duration",               os.path.join(tmp, "fig5_avg_duration.png")),
+        ("Confidence Distribution",        os.path.join(tmp, "fig6_confidence.png")),
+        ("Placement Heatmap",              os.path.join(tmp, "fig7_heatmap.png")),
     ]
 
     for label, img_path in charts:
         elements.append(Paragraph(f"<b>{label}</b>", styles["Heading2"]))
-        elements.append(Image(img_path, width=400, height=250))
+
+        if os.path.exists(img_path):
+            elements.append(Image(img_path, width=400, height=250))
+        else:
+            elements.append(Paragraph(f"<i>Missing: {os.path.basename(img_path)}</i>", styles["BodyText"]))
+
         elements.append(Spacer(1, 18))
 
     doc.build(elements)
     return pdf_path
+
+
 
 
 # ==========================================================
@@ -462,7 +478,7 @@ if menu == "📄 About Project":
     st.markdown("""
         <hr>
         <div style="text-align: center;">
-            <p style="font-size: 13px;">Jio Hotstar AdVision & Analytics | Built by <strong>Infant Joshva</strong></p>
+            <p style="font-size: 13px;">⚡Jio Hotstar AdVision & Analytics | Built by <strong>Infant Joshva</strong></p>
             <a href="https://github.com/Infant-Joshva" target="_blank" style="text-decoration: none; margin: 0 10px;">🐙 GitHub</a>
             <a href="https://www.linkedin.com/in/infant-joshva" target="_blank" style="text-decoration: none; margin: 0 10px;">🔗 LinkedIn</a>
             <a href="mailto:infantjoshva2024@gmail.com" style="text-decoration: none; margin: 0 10px;">📩 Contact</a>
@@ -570,7 +586,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                             "c": datetime.now(), "u": datetime.now()
                         })
 
-                    st.caption("Tracking done ✅. Finalizing video chunks… ⏳")
+                    st.caption("Tracking done ✅. Finalizing video chunks…⏱️")
                     if trk_url:
                         st.video(trk_url)
 
@@ -650,7 +666,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
 
     # =============== CHARTS (placeholder) ===============
     with tab_ch:
-        st.header("📈 Brand Analytics (Coming Soon)")
+        st.header("📈 Brand Analytic")
         st.caption(f"📍Reports for: **{st.session_state.last_completed_match_id}**")
 
         mid = st.session_state.last_completed_match_id
@@ -660,13 +676,14 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
         else:
 
             # Save each chart as png
-            fig1_path = "fig1_exposure.png"
-            fig2_path = "fig2_ratio.png"
-            fig_pie_path = "fig3_pie.png"
-            fig4_path = "fig4_detect_count.png"
-            fig5_path = "fig5_avg_duration.png"
-            fig6_path = "fig6_confidence.png"
-            fig7_path = "fig7_heatmap.png"
+            fig1_path = os.path.join(tmp, "fig1_exposure.png")
+            fig2_path = os.path.join(tmp, "fig2_ratio.png")
+            fig_pie_path = os.path.join(tmp, "fig3_pie.png")
+            fig4_path = os.path.join(tmp, "fig4_detect_count.png")
+            fig5_path = os.path.join(tmp, "fig5_avg_duration.png")
+            fig6_path = os.path.join(tmp, "fig6_confidence.png")
+            fig7_path = os.path.join(tmp, "fig7_heatmap.png")
+
 
 
             pdf = generate_charts_pdf(mid)
