@@ -75,17 +75,6 @@ database_url="postgresql://user:pass@host:port/db"
 streamlit run app/main.py
 ```
 
-## 🧪 Testing
-Place your test video inside:
-```
-testing_video/Short_test_video.mp4
-```
-
-Run detection:
-```
-python scripts/detect_brands.py --video testing_video/Short_test_video.mp4 --match-id JIO-MATCH-TEST
-```
-
 ## 📦 AWS S3 Structure
 ```
 
