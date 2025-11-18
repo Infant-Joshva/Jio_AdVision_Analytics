@@ -535,7 +535,7 @@ elif menu == "🧭 Dashboard (Track / Charts / DB / Admin)":
                         show=False,
                         save=True,
                         imgsz=480,
-                        vid_stride=20,
+                        vid_stride=50,
                         project="runs/track",
                         name=folder,
                         exist_ok=True
