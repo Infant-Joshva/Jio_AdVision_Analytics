@@ -82,6 +82,8 @@ reports/output/
 *.html
 
 # --- SECRETS / API / Sensitive Info (MOST IMPORTANT) ---
+# Ignore Streamlit secrets
+.streamlit/
 secrets/
 *.pem
 *.key
