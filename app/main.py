@@ -36,7 +36,7 @@ genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 # ==========================================================
 # CONFIG - update these values for your environment
 # ==========================================================
-DB_URL = "postgresql+psycopg2://postgres:Admin@localhost:5432/jio_advision"
+DB_URL = st.secrets["DB_URL"]
 BUCKET_NAME = "jioadvision-uploads"
 AWS_REGION = "ap-south-1"
 MODEL_PATH = Path(r"C:\Users\infan\OneDrive\Desktop\Final Project- Jio_AdVision_Analytics\Jio_AdVision_Analytics\model\best1.pt")
