@@ -35,7 +35,7 @@ Jio_AdVision_Analytics/
 ```
 📄 About Project
 ```
-![About-Page](https://github.com/user-attachments/assets/c5da3be8-898f-4919-b842-ffa71cad7852)
+![About-Page](https://github.com/user-attachments/assets/f853b9a1-346f-410e-85a4-7777ae81d443)
 
 ```
 🧭 Insights & Metrics
