@@ -55,7 +55,7 @@ engine = create_engine(DB_URL)
 s3 = boto3.client("s3", region_name=AWS_REGION)
 model = YOLO(MODEL_PATH)
 
-st.set_page_config(page_title="Jio Hotstar AdVision & Analytics", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="AdSpotter AI – Sports Sponsorship Intelligence", page_icon="🎬", layout="wide")
 st.sidebar.title("📌 Navigation")
 menu = st.sidebar.radio("Go to:", ["📄 About", "🧭 Insights & Metrics"])
 
@@ -294,25 +294,58 @@ def merge_detections(detections, gap=MERGE_GAP_THRESHOLD):
         out[b] = intervals
     return out
 
-
 def ffmpeg_trim_and_upload(video, start, end, match_id, detid):
     out = Path(f"tmp_{detid}.mp4")
     dur = max(0.01, end - start)
-    cmd = [FFMPEG_BIN, "-y", "-ss", f"{start:.3f}", "-i", str(video), "-t", f"{dur:.3f}", "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", str(out)]
+
+    cmd = [
+        FFMPEG_BIN, "-y",
+        "-ss", f"{start:.3f}",
+        "-i", str(video),
+        "-t", f"{dur:.3f}",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-c:a", "aac",
+        str(out)
+    ]
+
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # SAFER: ensure ffmpeg fully releases file before unlink
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        process.wait()
     except Exception:
         if out.exists():
             out.unlink()
         return None
+
     key = f"{match_id}/chunks/{detid}.mp4"
+
     try:
         s3.upload_file(str(out), BUCKET_NAME, key)
     except Exception:
-        out.unlink()
+        if out.exists():
+            out.unlink()
         return None
-    out.unlink()
+
+    # Give Windows a moment to release FFmpeg file lock
+    import time, gc
+    gc.collect()
+    time.sleep(0.1)
+
+    try:
+        out.unlink()
+    except PermissionError:
+        # Retry once after slight delay
+        time.sleep(0.2)
+        gc.collect()
+        try:
+            out.unlink()
+        except Exception:
+            pass  # still locked, ignore
+
     return key
+
 
 
 def insert_detection_row(match_id, brand, start, end, placement, key, conf):
@@ -423,7 +456,7 @@ if menu == "📄 About":
 
     # -------------------- MAIN ABOUT CONTENT --------------------
     st.markdown("""
-    <div class="premium-title">⚡Jio Hotstar AdVision & Analytics</div>
+    <div class="premium-title">⚡AdSpotter AI – Sports Sponsorship Intelligence</div>
 
     <div class="premium-body">
     A next-generation system that automatically detects, tracks, and analyzes brand advertisements in cricket match broadcasts — delivering accurate, fast, and audit-ready insights for sponsors and broadcasters.
@@ -433,15 +466,16 @@ if menu == "📄 About":
     <div class="premium-subtitle">Core Features 💡</div>
 
     <div class="premium-body">
-    🔍 <b>Automated Brand Detection</b> &nbsp;&nbsp; YOLOv8 identifies sponsor logos across frames.<br><br>
+                
+    🔍 <b>Automated Brand Detection</b> &nbsp;&nbsp; YOLOv8 identifies sponsor logos across frames.<br>
 
-    🕒 <b>Timestamp & Duration Metrics</b> &nbsp;&nbsp; Calculates how long each brand stays visible.<br><br>
+    🕒 <b>Timestamp & Duration Metrics</b> &nbsp;&nbsp; Calculates how long each brand stays visible.<br>
 
-    🎯 <b>Placement Classification</b> &nbsp;&nbsp; Jersey • Boundary • Overlay • Ground.<br><br>
+    🎯 <b>Placement Classification</b> &nbsp;&nbsp; Jersey • Boundary • Overlay • Ground.<br>
 
-    ✂️ <b>Video Chunk Extraction</b> &nbsp;&nbsp; Creates brand-wise clips and uploads to S3.<br><br>
+    ✂️ <b>Video Chunk Extraction</b> &nbsp;&nbsp; Creates brand-wise clips and uploads to S3.<br>
 
-    📀 <b>Structured Storage</b> &nbsp;&nbsp; All detections & aggregates saved in PostgreSQL.<br><br>
+    📀 <b>Structured Storage</b> &nbsp;&nbsp; All detections & aggregates saved in PostgreSQL.<br>
 
     📊 <b>Interactive Dashboard</b> &nbsp;&nbsp; View match data, detections, and brand exposure summaries.
     </div>
@@ -1086,8 +1120,10 @@ elif menu == "🧭 Insights & Metrics":
                     # -----------------------------
                     try:
                         with engine.begin() as conn:
-                            conn.execute(text("DELETE FROM brand_detections WHERE match_id = :m"), {"m": current_mid})
                             conn.execute(text("DELETE FROM matches WHERE match_id = :m"), {"m": current_mid})
+                            conn.execute(text("DELETE FROM brand_detections WHERE match_id = :m"), {"m": current_mid})
+                            conn.execute(text("DELETE FROM brand_aggregates WHERE match_id = :m"), {"m": current_mid})
+                            
 
                         st.caption("🧹 Database Cleared")
                     except Exception as e:
